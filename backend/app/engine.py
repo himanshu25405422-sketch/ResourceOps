@@ -261,10 +261,155 @@ class ResourceOpsEngine:
 
     def opportunity_detail(self, opportunity_id: str) -> dict[str, Any]:
         opportunity = next((item for item in self.opportunities if item["id"] == opportunity_id), self.opportunities[0])
-        if opportunity["id"] == "after-hours-hvac":
-            opportunity = {**opportunity, "what_happened": "Energy stayed above the contextual baseline after occupancy had already fallen, creating an avoidable evening load.", "evidence": [{"label": "Occupancy", "value": "↓ 18%", "tone": "positive"}, {"label": "HVAC runtime", "value": "→ unchanged", "tone": "neutral"}, {"label": "Temperature", "value": "→ normal", "tone": "neutral"}, {"label": "Energy consumption", "value": "↑ 16.8%", "tone": "warning"}], "timeline": {"start": "19:00", "end": "22:00", "recurrence": "4 of last 5 weekdays"}, "root_cause": {"title": "HVAC schedule mismatch", "confidence": 92, "evidence": ["Occupancy was 18% below the expected evening pattern", "HVAC runtime remained unchanged", "Temperature remained within the normal operating range", "Similar deviations occurred on the previous three weekdays"]}, "recommended_action": {"title": "Reduce HVAC operation by 45 minutes during the evening window.", "savings_kwh": 1420, "value": 18460, "cost": 0, "payback": "Immediate", "risk": "Low", "confidence": 92}}
-            return opportunity
-        return {**opportunity, "what_happened": opportunity["summary"], "evidence": [], "timeline": {"start": "09:00", "end": "17:00", "recurrence": "Recurring"}, "root_cause": {"title": "Contextual schedule deviation", "confidence": opportunity["confidence"], "evidence": [opportunity["summary"]]}, "recommended_action": self.recommendations[1]}
+        details_map: dict[str, dict[str, Any]] = {
+            "after-hours-hvac": {
+                "what_happened": "Energy stayed above the contextual baseline after occupancy had already fallen, creating an avoidable evening load.",
+                "evidence": [
+                    {"label": "Occupancy", "value": "↓ 18%", "tone": "positive"},
+                    {"label": "HVAC runtime", "value": "→ unchanged", "tone": "neutral"},
+                    {"label": "Temperature", "value": "→ normal", "tone": "neutral"},
+                    {"label": "Energy consumption", "value": "↑ 16.8%", "tone": "warning"},
+                ],
+                "timeline": {"start": "19:00", "end": "22:00", "recurrence": "4 of last 5 weekdays"},
+                "root_cause": {
+                    "title": "HVAC schedule mismatch",
+                    "confidence": 92,
+                    "evidence": [
+                        "Occupancy was 18% below the expected evening pattern",
+                        "HVAC runtime remained unchanged",
+                        "Temperature remained within the normal operating range",
+                        "Similar deviations occurred on the previous three weekdays",
+                    ],
+                },
+                "recommended_action": {
+                    "title": "Reduce HVAC operation by 45 minutes during the evening window.",
+                    "savings_kwh": 1420,
+                    "value": 18460,
+                    "cost": 0,
+                    "payback": "Immediate",
+                    "risk": "Low",
+                    "confidence": 92,
+                },
+            },
+            "weekend-baseload": {
+                "what_happened": "Non-operating energy is recurring above the contextual baseline on recent weekends, drawing 18 kWh/hr above idle conditions.",
+                "evidence": [
+                    {"label": "Occupancy", "value": "↓ 0% (unoccupied)", "tone": "positive"},
+                    {"label": "Weekend load", "value": "↑ 11.5%", "tone": "warning"},
+                    {"label": "Temperature", "value": "→ normal", "tone": "neutral"},
+                    {"label": "Residual energy", "value": "+18 kWh/hr", "tone": "warning"},
+                ],
+                "timeline": {"start": "09:00", "end": "16:00", "recurrence": "Recent weekends (Jul–Oct)"},
+                "root_cause": {
+                    "title": "Unshifted weekend non-critical loads",
+                    "confidence": 86,
+                    "evidence": [
+                        "Zero occupancy recorded across 8 weekend intervals",
+                        "Chilled water loop pressure remained at weekday operating setpoint",
+                        "Non-critical loads were left scheduled during peak hours",
+                        "Load profile consistent across recent weekend cycles",
+                    ],
+                },
+                "recommended_action": {
+                    "title": "Shift non-critical weekend load into the operating window.",
+                    "savings_kwh": 780,
+                    "value": 10140,
+                    "cost": 0,
+                    "payback": "Immediate",
+                    "risk": "Low",
+                    "confidence": 86,
+                },
+            },
+            "lighting-schedule": {
+                "what_happened": "Lighting load continues for two hours after the operating window on three weekdays without occupant trigger.",
+                "evidence": [
+                    {"label": "Occupancy", "value": "↓ 2% (after-hours)", "tone": "positive"},
+                    {"label": "Lighting circuits", "value": "↑ 13.0%", "tone": "warning"},
+                    {"label": "Schedule overrun", "value": "+2.0 hrs", "tone": "warning"},
+                    {"label": "Residual energy", "value": "+12 kWh/hr", "tone": "warning"},
+                ],
+                "timeline": {"start": "19:00", "end": "21:00", "recurrence": "Mondays, Wednesdays & Fridays"},
+                "root_cause": {
+                    "title": "Lighting timer override lingering",
+                    "confidence": 81,
+                    "evidence": [
+                        "Sweep timer set to 21:00 instead of 19:20",
+                        "No occupancy sensor motion detected post-19:15",
+                        "Circuit telemetry shows full floor illumination active",
+                        "Corresponds to janitorial override not returning to auto-mode",
+                    ],
+                },
+                "recommended_action": {
+                    "title": "Stop lighting circuits 20 minutes after the operating window.",
+                    "savings_kwh": 310,
+                    "value": 4030,
+                    "cost": 0,
+                    "payback": "Immediate",
+                    "risk": "Low",
+                    "confidence": 81,
+                },
+            },
+            "weather-spike": {
+                "what_happened": "A short temperature excursion increased cooling demand beyond the learned range, revealing rooftop unit degradation.",
+                "evidence": [
+                    {"label": "Ambient temp", "value": "↑ 31.4°C (+4°C spike)", "tone": "warning"},
+                    {"label": "RTU power draw", "value": "↑ 24.2%", "tone": "warning"},
+                    {"label": "Indoor setpoint", "value": "→ 23.5°C", "tone": "neutral"},
+                    {"label": "Residual energy", "value": "+26 kWh/hr", "tone": "warning"},
+                ],
+                "timeline": {"start": "13:00", "end": "16:00", "recurrence": "May 19, 2026 (weather excursion)"},
+                "root_cause": {
+                    "title": "Legacy rooftop unit compressor degradation",
+                    "confidence": 74,
+                    "evidence": [
+                        "Excursion pushed unit into maximum compressor staging",
+                        "COP degraded by 28% under high ambient conditions",
+                        "Refrigerant pressure logs suggest coil fouling",
+                        "Thermal comfort maintained but at disproportionate kWh cost",
+                    ],
+                },
+                "recommended_action": {
+                    "title": "Replace legacy rooftop unit with high-efficiency unit.",
+                    "savings_kwh": 3100,
+                    "value": 40300,
+                    "cost": 84000,
+                    "payback": "11 months",
+                    "risk": "Medium",
+                    "confidence": 78,
+                },
+            },
+            "monday-inefficiency": {
+                "what_happened": "A repeatable Monday evening pattern suggests setback schedules are not being reset consistently after weekend shutdowns.",
+                "evidence": [
+                    {"label": "Monday occupancy", "value": "↓ 12% (evening)", "tone": "positive"},
+                    {"label": "HVAC rampdown", "value": "→ delayed 1.5 hrs", "tone": "warning"},
+                    {"label": "Setpoint status", "value": "Manual hold", "tone": "warning"},
+                    {"label": "Residual energy", "value": "+14 kWh/hr", "tone": "warning"},
+                ],
+                "timeline": {"start": "18:00", "end": "20:00", "recurrence": "Every Monday evening"},
+                "root_cause": {
+                    "title": "Manual setpoint override retention",
+                    "confidence": 79,
+                    "evidence": [
+                        "Morning pre-cool override flag remains set into evening",
+                        "BMS schedule logic fails to clear manual override automatically",
+                        "Identical deviation observed across 4 consecutive Mondays",
+                        "Simple BMS schedule reset logic prevents recurrence entirely",
+                    ],
+                },
+                "recommended_action": {
+                    "title": "Automate Monday BMS override clearing at 18:00.",
+                    "savings_kwh": 240,
+                    "value": 3120,
+                    "cost": 0,
+                    "payback": "Immediate",
+                    "risk": "Low",
+                    "confidence": 79,
+                },
+            },
+        }
+        detail_data = details_map.get(opportunity["id"], details_map["after-hours-hvac"])
+        return {**opportunity, **detail_data}
 
     def simulate(self, params: dict[str, Any]) -> dict[str, Any]:
         hvac_minutes = float(params.get("hvac_minutes", 45))

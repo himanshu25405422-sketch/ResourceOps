@@ -1,8 +1,8 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
+import { useEffect, useMemo, useState, type ChangeEvent, type ReactNode } from "react";
 import { Activity, ArrowLeft, ArrowRight, ArrowUpRight, BarChart3, Building2, Check, ChevronDown, FileUp, Info, Menu, Settings as SettingsIcon, Sparkles, Target, TrendingUp, UploadCloud, X, Zap } from "lucide-react";
 import { api } from "./api";
 import { Button, BeforeAfter, Badge, CompactBar, ContextPanel, DataQualityBanner, EmptyState, ErrorNotice, EvidenceRow, InsightBlock, LoadingState, MetricCard, OpportunityCard, PageHeader, TrendChart, formatCurrency, formatNumber } from "./components";
-import { dataHealth as demoHealth, dashboard as demoDashboard, defaultSimulation as demoSimulation, details as demoDetails, impact as demoImpact, opportunities as demoOpportunities, recommendations as demoRecommendations, series as demoSeries } from "./data";
+import { dataHealth as demoHealth, dashboard as demoDashboard, details as demoDetails, impact as demoImpact, opportunities as demoOpportunities, recommendations as demoRecommendations, series as demoSeries } from "./data";
 import type { Dashboard, DataHealth, Detail, EnergyOverview, Impact, Opportunity, Recommendation, Simulation } from "./types";
 
 type Route = "dashboard" | "intelligence" | "opportunities" | "recommendations" | "simulator" | "impact" | "data" | "settings" | `opportunity:${string}`;
@@ -20,7 +20,7 @@ const nav = [
 
 function routeFromHash(): Route { const raw = window.location.hash.replace(/^#\/?/, "") || "dashboard"; return raw.startsWith("opportunities/") ? `opportunity:${raw.split("/")[1]}` : (raw as Route); }
 
-function AppShell({ route, onNavigate, children }: { route: Route; onNavigate: (route: Route) => void; children: React.ReactNode }) {
+function AppShell({ route, onNavigate, children }: { route: Route; onNavigate: (route: Route) => void; children: ReactNode }) {
   const [mobileOpen, setMobileOpen] = useState(false);
   const active = route.startsWith("opportunity:") ? "opportunities" : route;
   const navigate = (next: Route) => { onNavigate(next); setMobileOpen(false); };
@@ -33,18 +33,370 @@ function CommandCenter({ dashboard, onNavigate }: { dashboard: Dashboard; onNavi
 
 function TrendingUpIcon() { return <TrendingUp size={16} />; }
 
+type BreakdownCategory = "Operating hours" | "Non-operating hours" | "Weekday" | "Weekend";
+
+const breakdownTabs: BreakdownCategory[] = ["Operating hours", "Non-operating hours", "Weekday", "Weekend"];
+
+const breakdownConfigs: Record<
+  BreakdownCategory,
+  {
+    bars: { label: string; value: number; max: number; color: "blue" | "pink" | "green"; note: string }[];
+    signalTitle: string;
+    signals: { num: string; bold: string; text: string }[];
+    opportunityId: string;
+    linkText: string;
+  }
+> = {
+  "Operating hours": {
+    bars: [
+      { label: "Operating window", value: 30540, max: 48240, color: "blue", note: "63.3% of observed monthly usage (08:00–19:00)" },
+      { label: "Expected baseline", value: 27190, max: 48240, color: "green", note: "Learned baseline accounting for daytime weather & occupancy" },
+      { label: "Operating variance", value: 3350, max: 48240, color: "pink", note: "+12.3% residual above baseline during occupied periods" },
+    ],
+    signalTitle: "Three things changed",
+    signals: [
+      { num: "01", bold: "Evening occupancy fell.", text: "The abnormal window begins after the expected operating pattern ends." },
+      { num: "02", bold: "HVAC stayed flat.", text: "Runtime did not respond to the lower load context." },
+      { num: "03", bold: "The behavior repeats.", text: "Similar residuals appeared on four of the last five weekdays." },
+    ],
+    opportunityId: "after-hours-hvac",
+    linkText: "Open the evidence chain",
+  },
+  "Non-operating hours": {
+    bars: [
+      { label: "Non-operating window", value: 17700, max: 48240, color: "pink", note: "36.7% of observed monthly usage outside working hours" },
+      { label: "Expected standby baseline", value: 16610, max: 48240, color: "blue", note: "Normal overnight security, emergency lighting & baseload" },
+      { label: "Avoidable off-hours residual", value: 1090, max: 48240, color: "green", note: "Recurring residuals drive the opportunity queue (Opportunity #1)" },
+    ],
+    signalTitle: "Off-hours signal analysis",
+    signals: [
+      { num: "01", bold: "Schedule overshoot.", text: "Active cooling remains engaged for up to 3 hours after occupants leave." },
+      { num: "02", bold: "Standby load is stable.", text: "Baseline accounts for IT and security; deviation is strictly schedule overrun." },
+      { num: "03", bold: "Recurring opportunity.", text: "Ending evening HVAC 45 mins earlier eliminates 1,420 kWh monthly." },
+    ],
+    opportunityId: "after-hours-hvac",
+    linkText: "Inspect after-hours HVAC evidence",
+  },
+  "Weekday": {
+    bars: [
+      { label: "Weekday total actual", value: 38120, max: 48240, color: "blue", note: "79.0% of total monthly consumption across 22 working days" },
+      { label: "Expected weekday baseline", value: 34700, max: 48240, color: "green", note: "Contextual expectation for normal business operations" },
+      { label: "Weekday residual variance", value: 3420, max: 48240, color: "pink", note: "+9.9% above baseline, concentrated in evening overruns & Monday resets" },
+    ],
+    signalTitle: "Weekday pattern analysis",
+    signals: [
+      { num: "01", bold: "Schedule extension.", text: "Over 14% of weekday energy is consumed after the 19:00 official close." },
+      { num: "02", bold: "Monday reset pattern.", text: "Systematic lag in returning to setback mode after weekend shutdown." },
+      { num: "03", bold: "Lighting overrun.", text: "Lighting circuits remain energized 2 hours past operating closure on Mon/Wed/Fri." },
+    ],
+    opportunityId: "monday-inefficiency",
+    linkText: "Review Monday reset pattern",
+  },
+  "Weekend": {
+    bars: [
+      { label: "Weekend total actual", value: 10120, max: 48240, color: "pink", note: "21.0% of total monthly consumption across 8 weekend days" },
+      { label: "Expected weekend baseline", value: 9190, max: 48240, color: "blue", note: "Expected unoccupied baseline for security & idle standby" },
+      { label: "Weekend baseload residual", value: 930, max: 48240, color: "green", note: "+10.1% avoidable baseload above expected idle conditions" },
+    ],
+    signalTitle: "Weekend baseload analysis",
+    signals: [
+      { num: "01", bold: "Ghost baseload.", text: "Non-operating energy recurs 18 kWh/hr above learned baseload on recent weekends." },
+      { num: "02", bold: "Unshifted loads.", text: "Non-critical loads run during weekends rather than low-tariff windows." },
+      { num: "03", bold: "Zero-cost intervention.", text: "Moving non-critical weekend load into operating window saves ₹10,140/mo." },
+    ],
+    opportunityId: "weekend-baseload",
+    linkText: "Examine weekend baseload opportunity",
+  },
+};
+
 function Intelligence({ energy, onPeriodChange, period, onNavigate }: { energy: EnergyOverview; onPeriodChange: (period: string) => void; period: string; onNavigate: (route: Route) => void }) {
-  return <div className="page"><PageHeader eyebrow="Contextual baseline" title="Energy intelligence" description="Understand how the building is behaving across operational conditions." actions={<div className="segmented">{["24H", "7D", "30D", "90D", "1Y"].map((item) => <button key={item} className={period === item ? "selected" : ""} onClick={() => onPeriodChange(item)}>{item}</button>)}</div>} /><div className="content-grid intelligence-grid"><section className="panel trend-panel"><div className="panel-head"><div><div className="eyebrow">Primary operating signal</div><h2>Actual vs expected energy</h2><p>{period === "24H" ? "Hourly view" : "Daily aggregation"} · baseline includes occupancy, weather, schedule, and HVAC activity.</p></div></div><TrendChart points={energy.points} height={330} /></section><ContextPanel energy={energy} /></div><div className="content-grid breakdown-grid"><section className="panel panel-pad"><div className="eyebrow">Consumption breakdown</div><h2 className="subheading">Where the residual accumulates</h2><div className="breakdown-tabs"><button className="selected">Operating hours</button><button>Non-operating hours</button><button>Weekday</button><button>Weekend</button></div><CompactBar label="Operating window" value={30540} max={48240} color="blue" note="63.3% of observed monthly usage" /><CompactBar label="Non-operating window" value={17700} max={48240} color="pink" note="Recurring residuals drive the opportunity queue" /><CompactBar label="Contextual variance" value={4350} max={48240} color="green" note="9.9% above the learned baseline" /></section><section className="panel panel-pad"><div className="eyebrow">Read the signal</div><h2 className="subheading">Three things changed</h2><div className="signal-list"><div><span className="signal-number">01</span><p><strong>Evening occupancy fell.</strong> The abnormal window begins after the expected operating pattern ends.</p></div><div><span className="signal-number">02</span><p><strong>HVAC stayed flat.</strong> Runtime did not respond to the lower load context.</p></div><div><span className="signal-number">03</span><p><strong>The behavior repeats.</strong> Similar residuals appeared on four of the last five weekdays.</p></div></div><button className="text-button" onClick={() => onNavigate("opportunity:after-hours-hvac")}>Open the evidence chain <ArrowRight size={14} /></button></section></div></div>;
+  const [breakdownTab, setBreakdownTab] = useState<BreakdownCategory>("Operating hours");
+  const config = breakdownConfigs[breakdownTab];
+
+  return (
+    <div className="page">
+      <PageHeader
+        eyebrow="Contextual baseline"
+        title="Energy intelligence"
+        description="Understand how the building is behaving across operational conditions."
+        actions={
+          <div className="segmented">
+            {["24H", "7D", "30D", "90D", "1Y"].map((item) => (
+              <button key={item} className={period === item ? "selected" : ""} onClick={() => onPeriodChange(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
+        }
+      />
+      <div className="content-grid intelligence-grid">
+        <section className="panel trend-panel">
+          <div className="panel-head">
+            <div>
+              <div className="eyebrow">Primary operating signal</div>
+              <h2>Actual vs expected energy</h2>
+              <p>{period === "24H" ? "Hourly view" : "Daily aggregation"} · baseline includes occupancy, weather, schedule, and HVAC activity.</p>
+            </div>
+          </div>
+          <TrendChart points={energy.points} height={330} />
+        </section>
+        <ContextPanel energy={energy} />
+      </div>
+      <div className="content-grid breakdown-grid">
+        <section className="panel panel-pad">
+          <div className="eyebrow">Consumption breakdown</div>
+          <h2 className="subheading">Where the residual accumulates</h2>
+          <div className="breakdown-tabs" role="tablist" aria-label="Consumption breakdown categories">
+            {breakdownTabs.map((tab) => (
+              <button
+                key={tab}
+                type="button"
+                role="tab"
+                aria-selected={breakdownTab === tab}
+                className={breakdownTab === tab ? "selected" : ""}
+                onClick={() => setBreakdownTab(tab)}
+              >
+                {tab}
+              </button>
+            ))}
+          </div>
+          {config.bars.map((bar) => (
+            <CompactBar key={bar.label} label={bar.label} value={bar.value} max={bar.max} color={bar.color} note={bar.note} />
+          ))}
+        </section>
+        <section className="panel panel-pad">
+          <div className="eyebrow">Read the signal</div>
+          <h2 className="subheading">{config.signalTitle}</h2>
+          <div className="signal-list">
+            {config.signals.map((sig) => (
+              <div key={sig.num}>
+                <span className="signal-number">{sig.num}</span>
+                <p>
+                  <strong>{sig.bold}</strong> {sig.text}
+                </p>
+              </div>
+            ))}
+          </div>
+          <button className="text-button" onClick={() => onNavigate(`opportunity:${config.opportunityId}`)}>
+            {config.linkText} <ArrowRight size={14} />
+          </button>
+        </section>
+      </div>
+    </div>
+  );
 }
 
 function Opportunities({ opportunities, onNavigate }: { opportunities: Opportunity[]; onNavigate: (route: Route) => void }) {
-  const [filter, setFilter] = useState("All"); const filtered = filter === "All" ? opportunities : opportunities.filter((item) => item.severity === filter);
-  return <div className="page"><PageHeader eyebrow="Anomaly → opportunity" title="Opportunities" description="Meaningful deviations ranked by impact, confidence, recurrence, and actionability." actions={<div className="filter-row">{["All", "High", "Medium", "Low"].map((item) => <button key={item} className={`filter-chip ${filter === item ? "selected" : ""}`} onClick={() => setFilter(item)}>{item}</button>)}</div>} /><div className="opportunity-summary"><div><strong>{opportunities.length}</strong><span>ranked opportunities</span></div><div><strong>{formatNumber(opportunities.reduce((sum, item) => sum + item.potential_kwh, 0))} kWh</strong><span>monthly potential</span></div><div><strong>88%</strong><span>average confidence</span></div><div><strong>4 / 5</strong><span>actionable now</span></div></div><section className="panel"><div className="table-wrap"><table><thead><tr><th>Opportunity</th><th>Priority</th><th>Detected</th><th>Expected → actual</th><th>Potential</th><th>Confidence</th><th /></tr></thead><tbody>{filtered.map((item) => <tr key={item.id} className="clickable-row" onClick={() => onNavigate(`opportunity:${item.id}`)}><td><strong>{item.title}</strong><span className="cell-sub">{item.summary}</span></td><td><Badge tone={item.severity === "High" ? "high" : item.severity === "Medium" ? "medium" : "low"}>{item.severity}</Badge></td><td>{item.detected}</td><td><span className="mono-value">{item.expected_kwh} → {item.actual_kwh} kWh</span><span className="cell-sub">+{item.residual_kwh} kWh residual</span></td><td><strong>{item.monthly_range}</strong><span className="cell-sub">{item.monthly_value}</span></td><td><span className="confidence-value">{item.confidence}%</span></td><td><ArrowRight size={15} /></td></tr>)}</tbody></table></div></section></div>;
+  const [filter, setFilter] = useState("All");
+  const filtered = filter === "All" ? opportunities : opportunities.filter((item) => item.severity === filter);
+  return (
+    <div className="page">
+      <PageHeader
+        eyebrow="Anomaly → opportunity"
+        title="Opportunities"
+        description="Meaningful deviations ranked by impact, confidence, recurrence, and actionability."
+        actions={
+          <div className="filter-row">
+            {["All", "High", "Medium", "Low"].map((item) => (
+              <button key={item} className={`filter-chip ${filter === item ? "selected" : ""}`} onClick={() => setFilter(item)}>
+                {item}
+              </button>
+            ))}
+          </div>
+        }
+      />
+      <div className="opportunity-summary">
+        <div>
+          <strong>{opportunities.length}</strong>
+          <span>ranked opportunities</span>
+        </div>
+        <div>
+          <strong>{formatNumber(opportunities.reduce((sum, item) => sum + item.potential_kwh, 0))} kWh</strong>
+          <span>monthly potential</span>
+        </div>
+        <div>
+          <strong>88%</strong>
+          <span>average confidence</span>
+        </div>
+        <div>
+          <strong>4 / 5</strong>
+          <span>actionable now</span>
+        </div>
+      </div>
+      <section className="panel">
+        {filtered.length === 0 ? (
+          <EmptyState title="No opportunities found" body="No opportunities match the selected priority filter." />
+        ) : (
+          <div className="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Opportunity</th>
+                  <th>Priority</th>
+                  <th>Detected</th>
+                  <th>Expected → actual</th>
+                  <th>Potential</th>
+                  <th>Confidence</th>
+                  <th />
+                </tr>
+              </thead>
+              <tbody>
+                {filtered.map((item) => (
+                  <tr key={item.id} className="clickable-row" onClick={() => onNavigate(`opportunity:${item.id}`)}>
+                    <td>
+                      <strong>{item.title}</strong>
+                      <span className="cell-sub">{item.summary}</span>
+                    </td>
+                    <td>
+                      <Badge tone={item.severity === "High" ? "high" : item.severity === "Medium" ? "medium" : "low"}>{item.severity}</Badge>
+                    </td>
+                    <td>{item.detected}</td>
+                    <td>
+                      <span className="mono-value">
+                        {item.expected_kwh} → {item.actual_kwh} kWh
+                      </span>
+                      <span className="cell-sub">+{item.residual_kwh} kWh residual</span>
+                    </td>
+                    <td>
+                      <strong>{item.monthly_range}</strong>
+                      <span className="cell-sub">{item.monthly_value}</span>
+                    </td>
+                    <td>
+                      <span className="confidence-value">{item.confidence}%</span>
+                    </td>
+                    <td>
+                      <ArrowRight size={15} />
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </section>
+    </div>
+  );
 }
 
 function OpportunityDetail({ detail, onNavigate }: { detail: Detail; onNavigate: (route: Route) => void }) {
   const energy = demoSeries("24H");
-  return <div className="page"><button className="back-link" onClick={() => onNavigate("opportunities")}><ArrowLeft size={14} /> Back to opportunities</button><PageHeader eyebrow={`${detail.detected} · evidence review`} title={detail.title} description={detail.what_happened} actions={<><Badge tone="high">{detail.severity} priority</Badge><Badge tone="positive">{detail.confidence}% confidence</Badge></>} /><div className="content-grid detail-grid"><div className="detail-main"><section className="panel panel-pad"><div className="panel-title-row"><div><div className="eyebrow">Evidence</div><h2>What changed in the abnormal window?</h2></div><span className="window-label">{detail.timeline.start} → {detail.timeline.end}</span></div><div className="evidence-grid">{detail.evidence.map((item) => <EvidenceRow key={item.label} {...item} />)}</div><div className="detail-chart"><TrendChart points={energy.points.slice(6, 13)} height={225} /></div><div className="timeline-row"><span>ANOMALY BEGAN <strong>{detail.timeline.start}</strong></span><i /><span>ANOMALY ENDED <strong>{detail.timeline.end}</strong></span><em>{detail.timeline.recurrence}</em></div></section><section className="panel panel-pad"><div className="eyebrow">Root-cause intelligence</div><div className="cause-row"><div><h2>Likely driver: {detail.root_cause.title}</h2><p>Correlation and recurrence support this hypothesis. The system does not claim physical causation.</p></div><Badge tone="positive">{detail.root_cause.confidence}% confidence</Badge></div><ul className="evidence-list">{detail.root_cause.evidence.map((item) => <li key={item}><Check size={15} />{item}</li>)}</ul></section></div><aside className="detail-aside"><section className="panel recommendation-panel"><div className="eyebrow">Recommended intervention</div><h2>{detail.recommended_action.title}</h2><p>Low operational risk, immediate payback, and aligned to the evidence above.</p><div className="recommendation-stats"><div><span>Projected saving</span><strong>{formatNumber(detail.recommended_action.savings_kwh)} kWh/mo</strong></div><div><span>Financial value</span><strong>{formatCurrency(detail.recommended_action.value)}/mo</strong></div><div><span>Implementation cost</span><strong>{detail.recommended_action.cost === 0 ? "₹0" : formatCurrency(detail.recommended_action.cost)}</strong></div><div><span>Payback</span><strong>{detail.recommended_action.payback}</strong></div></div><Button onClick={() => onNavigate("simulator")}>Simulate intervention <ArrowRight size={14} /></Button></section><section className="panel panel-pad"><div className="eyebrow">Data provenance</div><div className="provenance-row"><span>Model</span><strong>contextual-baseline-v0.1</strong></div><div className="provenance-row"><span>Data coverage</span><strong>99.6%</strong></div><div className="provenance-row"><span>Evidence window</span><strong>Oct 03, 19:00–22:00</strong></div></section></aside></div></div>;
+  return (
+    <div className="page">
+      <button className="back-link" onClick={() => onNavigate("opportunities")}>
+        <ArrowLeft size={14} /> Back to opportunities
+      </button>
+      <PageHeader
+        eyebrow={`${detail.detected} · evidence review`}
+        title={detail.title}
+        description={detail.what_happened}
+        actions={
+          <>
+            <Badge tone="high">{detail.severity} priority</Badge>
+            <Badge tone="positive">{detail.confidence}% confidence</Badge>
+          </>
+        }
+      />
+      <div className="content-grid detail-grid">
+        <div className="detail-main">
+          <section className="panel panel-pad">
+            <div className="panel-title-row">
+              <div>
+                <div className="eyebrow">Evidence</div>
+                <h2>What changed in the abnormal window?</h2>
+              </div>
+              <span className="window-label">
+                {detail.timeline?.start ?? "08:00"} → {detail.timeline?.end ?? "22:00"}
+              </span>
+            </div>
+            <div className="evidence-grid">
+              {detail.evidence && detail.evidence.length > 0 ? (
+                detail.evidence.map((item) => <EvidenceRow key={item.label} {...item} />)
+              ) : (
+                <div className="evidence-row">
+                  <span>Avoidable range</span>
+                  <strong>{detail.avoidable_range}</strong>
+                </div>
+              )}
+            </div>
+            <div className="detail-chart">
+              <TrendChart points={energy.points.slice(6, 13)} height={225} />
+            </div>
+            <div className="timeline-row">
+              <span>
+                ANOMALY BEGAN <strong>{detail.timeline?.start ?? "19:00"}</strong>
+              </span>
+              <i />
+              <span>
+                ANOMALY ENDED <strong>{detail.timeline?.end ?? "22:00"}</strong>
+              </span>
+              <em>{detail.timeline?.recurrence ?? "Recurring"}</em>
+            </div>
+          </section>
+          <section className="panel panel-pad">
+            <div className="eyebrow">Root-cause intelligence</div>
+            <div className="cause-row">
+              <div>
+                <h2>Likely driver: {detail.root_cause?.title ?? "Contextual schedule deviation"}</h2>
+                <p>Correlation and recurrence support this hypothesis. The system does not claim physical causation.</p>
+              </div>
+              <Badge tone="positive">{detail.root_cause?.confidence ?? detail.confidence}% confidence</Badge>
+            </div>
+            <ul className="evidence-list">
+              {(detail.root_cause?.evidence ?? [detail.summary]).map((item) => (
+                <li key={item}>
+                  <Check size={15} />
+                  {item}
+                </li>
+              ))}
+            </ul>
+          </section>
+        </div>
+        <aside className="detail-aside">
+          <section className="panel recommendation-panel">
+            <div className="eyebrow">Recommended intervention</div>
+            <h2>{detail.recommended_action?.title ?? detail.title}</h2>
+            <p>Low operational risk, immediate payback, and aligned to the evidence above.</p>
+            <div className="recommendation-stats">
+              <div>
+                <span>Projected saving</span>
+                <strong>{formatNumber(detail.recommended_action?.savings_kwh ?? detail.potential_kwh)} kWh/mo</strong>
+              </div>
+              <div>
+                <span>Financial value</span>
+                <strong>{formatCurrency(detail.recommended_action?.value ?? 0)}/mo</strong>
+              </div>
+              <div>
+                <span>Implementation cost</span>
+                <strong>{detail.recommended_action?.cost === 0 ? "₹0" : formatCurrency(detail.recommended_action?.cost ?? 0)}</strong>
+              </div>
+              <div>
+                <span>Payback</span>
+                <strong>{detail.recommended_action?.payback ?? "Immediate"}</strong>
+              </div>
+            </div>
+            <Button onClick={() => onNavigate("simulator")}>
+              Simulate intervention <ArrowRight size={14} />
+            </Button>
+          </section>
+          <section className="panel panel-pad">
+            <div className="eyebrow">Data provenance</div>
+            <div className="provenance-row">
+              <span>Model</span>
+              <strong>contextual-baseline-v0.1</strong>
+            </div>
+            <div className="provenance-row">
+              <span>Data coverage</span>
+              <strong>99.6%</strong>
+            </div>
+            <div className="provenance-row">
+              <span>Evidence window</span>
+              <strong>Oct 03, 19:00–22:00</strong>
+            </div>
+          </section>
+        </aside>
+      </div>
+    </div>
+  );
 }
 
 function Recommendations({ recommendations, onNavigate }: { recommendations: Recommendation[]; onNavigate: (route: Route) => void }) {
